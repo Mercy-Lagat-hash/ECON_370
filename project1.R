@@ -32,7 +32,7 @@ wdi2018 <- wdi2018 %>%
     tourist_arrivals = `International tourism, number of arrivals`,
     quality_service = `Government Effectiveness - Governance score (0-100)`,
     internet = `Individuals using the Internet (% of population)`,
-    trade = `Net trade in goods (BoP, current US$)`,
+    net_trade = `Net trade in goods (BoP, current US$)`,
     life_expectancy = `Life expectancy at birth, total (years)`
   )
 
