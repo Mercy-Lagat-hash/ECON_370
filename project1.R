@@ -2,14 +2,15 @@
 ## NAME:  Mercy, Rediet, Caleb
 ## TOPIC: Exploring Patterns in Tourism, Economic Development, 
 ##and Employment in the Tourism Sector Across Countries
-##Cleaning 
+##CLEANING
 
 ##Retaining only real countries 
+
 ##install.packages("countrycode")
 ##library(countrycode)
-datapath<- "/Users/mercylagat/Downloads/Exploratory_Project_data/WDI_project1_data.csv" ##renamed the csv file
+datapath<- "/Users/mercylagat/Downloads/Exploratory_Project_data/WDI_project1_data.csv"
 wditourism <- read_csv(datapath)
-## uses the country codes in the countrycode library to retain valid countries. 
+## uses the country codes in the countrycode libary to retain valid countries. 
 wditourism <- wditourism %>%
   filter(!is.na(countrycode(`Country Code`, "iso3c", "country.name")))
 
@@ -36,27 +37,24 @@ wdi2018 <- wdi2018 %>%
     life_expectancy = `Life expectancy at birth, total (years)`
   )
 
-# STEP 5: load the ILO employment data, and build gender split percentages ----------
 
-# First load the raw file
-emp_raw <- read_csv("EMP_TEMP_SEX_AGE_NB_A-filtered-2026-09-29.csv", show_col_types = FALSE)
+##Cleaning secondary data
+data2path<- "/Users/mercylagat/Downloads/ILOemployement.csv"
+emp_total <- read_csv(data2path)
 
-# This file has THREE rows per country (Total, Male, Female) - actually only
-# Total and Female are present (Male isn't given directly, we calculate it).
-# We pull out the Total employment numbers first:
-emp_total <- emp_raw %>%
+emp_total <- emp_total %>%
   filter(sex.label == "Total") %>%
-  select(country = ref_area.label, year = time, total_employment_thousands = obs_value)
+  select(country = ref_area.label,total_employment_thousands = obs_value)
 
 # Then we pull out the Female employment numbers separately:
-emp_female <- emp_raw %>%
+emp_female <- ILOempl %>%
   filter(sex.label == "Female") %>%
-  select(country = ref_area.label, year = time, female_employment_thousands = obs_value)
+  select(country = ref_area.label, female_employment_thousands = obs_value)
 
 # Now we join Total and Female together into one table, matching on country + year.
 # left_join() keeps every row from emp_total, and adds the matching female number.
 emp_temp <- emp_total %>%
-  left_join(emp_female, by = c("country", "year"))
+  left_join(emp_female, by = c("country"))
 
 # Now calculate the percentages:
 # - female_pct = what share of total employment is female
@@ -95,26 +93,24 @@ emp_temp <- emp_temp %>%
     country == "Venezuela, Bolivarian Republic of"                    ~ "Venezuela, RB",
     TRUE ~ country   # if none of the above match, just keep the name as-is
   ))
-
 # Check which country names STILL don't match anything in WDI.
 # (Taiwan, Palestine, and Wallis and Futuna aren't in WDI at all, so they'll show up here - that's expected.)
 emp_temp %>%
-  filter(!country %in% wdi_wide$country_name) %>%
+  filter(!country %in% wdi2018$country) %>%
   distinct(country)
 
 
 # STEP 7: merge the two datasets together --------------------------------------------
 
 # inner_join() keeps only the rows where country + year match in BOTH data frames.
-merged <- wdi_2018_complete %>%
-  inner_join(emp_temp, by = c("country_name" = "country", "year"))
+tourismdata_2018 <- wdi2018 %>%
+  inner_join(emp_temp, by = c("country" = "country")) ##china Kosovo, Palestine, State of Taiwan, China, Wallis and Futuna removed
 
-glimpse(merged)   # shows all the columns and a preview of the data
-nrow(merged)      # how many country-rows made it into the final merged dataset
+glimpse(tourismdata_2018)   # shows all the columns and a preview of the data
+nrow(tourismdata_2018)      # how many country-rows made it into the final merged dataset
 
-View(merged)
+View(tourismdata_2018)
 
-
-##Removing countries with missing data
+tourismdata_2018 <- tourismdata_2018 %>%drop_na(-c())
 
 
