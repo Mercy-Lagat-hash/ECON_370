@@ -13,3 +13,19 @@ wditourism <- read_csv(datapath)
 wditourism <- wditourism %>%
   filter(!is.na(countrycode(`Country Code`, "iso3c", "country.name")))
 
+
+##Removing other years except 2018, and relabels the missing data with N/A
+wdi2018 <- wditourism %>% select(`Country Name`, `Country Code`, `Series Name`, `2018 [YR2018]`) %>%
+  mutate(`2018 [YR2018]` = as.numeric(na_if(`2018 [YR2018]`, "..")))
+
+##Reshaping to have variables as columns in the data
+
+wdi2018 <- wdi2018 %>% pivot_wider(names_from = `Series Name`, values_from = `2018 [YR2018]`)
+
+## Renaming variables
+wdi2018 <- 
+
+
+##Removing countries with missing data
+
+
