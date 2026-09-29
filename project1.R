@@ -31,9 +31,9 @@ wdi2018 <- wdi2018 %>%
     population = `Population, total`,
     tourist_arrivals = `International tourism, number of arrivals`,
     pop_density = `Population density (people per sq. km of land area)`,
-    quality_service = 
+    quality_service = `Government Effectiveness - Governance score (0-100)`,
     internet = `Individuals using the Internet (% of population)`,
-    trade = `Trade (% of GDP)`,
+    trade = `Net trade in goods (BoP, current US$)`,
     urbanization = `Urban population (% of total population)`,
     transportation = ``,
     life_expectancy = `Life expectancy at birth, total (years)`
