@@ -23,7 +23,22 @@ wdi2018 <- wditourism %>% select(`Country Name`, `Country Code`, `Series Name`, 
 wdi2018 <- wdi2018 %>% pivot_wider(names_from = `Series Name`, values_from = `2018 [YR2018]`)
 
 ## Renaming variables
-wdi2018 <- 
+wdi2018 <- wdi2018 %>%
+  rename(
+    country = `Country Name`,
+    isocode = `Country Code`,
+    gdp_pc2018 = `GDP per capita (current US$)`,
+    population = `Population, total`,
+    tourist_arrivals = `International tourism, number of arrivals`,
+    pop_density = `Population density (people per sq. km of land area)`,
+    quality_service = 
+    internet = `Individuals using the Internet (% of population)`,
+    trade = `Trade (% of GDP)`,
+    urbanization = `Urban population (% of total population)`,
+    transportation = ``,
+    life_expectancy = `Life expectancy at birth, total (years)`
+  )
+
 
 
 ##Removing countries with missing data
