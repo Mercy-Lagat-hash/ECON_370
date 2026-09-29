@@ -30,11 +30,9 @@ wdi2018 <- wdi2018 %>%
     gdp_pc2018 = `GDP per capita (current US$)`,
     population = `Population, total`,
     tourist_arrivals = `International tourism, number of arrivals`,
-    pop_density = `Population density (people per sq. km of land area)`,
     quality_service = `Government Effectiveness - Governance score (0-100)`,
     internet = `Individuals using the Internet (% of population)`,
     trade = `Net trade in goods (BoP, current US$)`,
-    urbanization = `Urban population (% of total population)`,
     life_expectancy = `Life expectancy at birth, total (years)`
   )
 
