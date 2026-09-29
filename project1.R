@@ -35,7 +35,6 @@ wdi2018 <- wdi2018 %>%
     internet = `Individuals using the Internet (% of population)`,
     trade = `Net trade in goods (BoP, current US$)`,
     urbanization = `Urban population (% of total population)`,
-    transportation = ``,
     life_expectancy = `Life expectancy at birth, total (years)`
   )
 
