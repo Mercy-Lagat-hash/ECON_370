@@ -114,3 +114,64 @@ View(tourismdata_2018)
 tourismdata_2018 <- tourismdata_2018 %>%drop_na(-c())
 
 
+#####PCA ANALSYSIS###
+merged_num <- merged%>%
+  column_to_rownames("country_name")%>%
+  select(internet,
+         net_trade,
+         life_expectancy,
+         population,
+         quality_service,
+         tourism_density,
+         gdp_pc2018,
+         total_employment_thousands,
+         female_pct)
+pca_results <- prcomp(merged_num, scale. = TRUE)
+pca_loadings <- pca_results$rotation %>%
+  round(3) %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "variable")
+print(pca_loadings)
+sum(pca_results$rotation[, "PC1"] > 0)
+biplot(pca_results, scale = 0)
+
+###KMEANS CLUSTERING###
+set.seed(178999)
+num_clust <- 7
+km_results <- kmeans(merged_num_scaled, centers = num_clust, nstart = 20)
+sort(km_results$size)
+merged$country_name[km_results$cluster %in% which(km_results$size == 1)]
+
+clust_centers <- round(t(km_results$centers), 3)
+print(clust_centers)
+
+plot_data <- as.data.frame(pca_results$x) %>%
+  rownames_to_column(var = "country")
+plot_data$cluster <- factor(km_results$cluster)
+ggplot(plot_data, aes(x = PC1, y = PC2, color = cluster)) +
+  geom_point(size = 3, alpha = 0.8) +
+  labs(
+    title = "Country Clusters on the First Two Principal Components",
+    x = "First Principal Component",
+    y = "Second Principal Component",
+    color = "Cluster"
+  ) +
+  theme_minimal()
+
+plot_data %>% filter(country == "United States")
+plot_data %>% filter(country == "Macao SAR, China")
+plot_data %>% filter(country == "India")
+plot_data %>% filter(country == "Brazil")
+plot_data %>% filter(country == "France")
+
+plot_data %>%
+  arrange(cluster, country) %>%
+  select(cluster, country) %>%
+  View()
+##United States has very low PC2 because of population and total employment, PC3 and PC4 low because of female pct
+# and PC5 low because of internet and life expectancy.
+##India PC1 and PC2 because of employment and population.
+
+##Macao has a very low PC3 and very high PC4 because of its high tourism density
+
+
