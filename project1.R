@@ -112,35 +112,46 @@ nrow(tourismdata_2018)      # how many country-rows made it into the final merge
 View(tourismdata_2018)
 
 tourismdata_2018 <- tourismdata_2018 %>%drop_na(-c())
+tourismdata_2018<- tourismdata_2018 %>% mutate(tourism_density = `tourist_arrivals`/`population`)
 
+pca_tourism <- prcomp(tourismdata_2018, scale. = TRUE)
+biplot(pca_tourism )
+pca_loadings_tourism <- as.data.frame(round(pca_tourism $rotation, digits = 3))
+pca_loadings_tourism <- pca_loadings_tourism |>
+  mutate(variable = rownames(pca_tourism $rotation)) |>
+  relocate(variable, .before = 1)
+
+print(pca_loadings_tourism)
 
 #####PCA ANALSYSIS###
-merged_num <- merged%>%
-  column_to_rownames("country_name")%>%
+##countries_to_drop <- c("United States", "India")
+tourismdata_2018_num <- tourismdata_2018%>%
+  ##filter(!country %in% countries_to_drop) %>%
+  column_to_rownames("country")%>%
   select(internet,
          net_trade,
          life_expectancy,
-         population,
          quality_service,
          tourism_density,
          gdp_pc2018,
          total_employment_thousands,
          female_pct)
-pca_results <- prcomp(merged_num, scale. = TRUE)
-pca_loadings <- pca_results$rotation %>%
+pca_results <- prcomp(tourismdata_2018_num, scale. = TRUE)
+pca_loadings_tourism <- pca_results$rotation %>%
   round(3) %>%
   as.data.frame() %>%
   rownames_to_column(var = "variable")
-print(pca_loadings)
+print(pca_loadings_tourism)
 sum(pca_results$rotation[, "PC1"] > 0)
 biplot(pca_results, scale = 0)
 
 ###KMEANS CLUSTERING###
+tourism_scaled <- scale(tourismdata_2018_num)
 set.seed(178999)
-num_clust <- 7
-km_results <- kmeans(merged_num_scaled, centers = num_clust, nstart = 20)
+num_clust <- 4
+km_results <- kmeans(tourism_scaled, centers = num_clust, nstart = 20)
 sort(km_results$size)
-merged$country_name[km_results$cluster %in% which(km_results$size == 1)]
+tourismdata_2018$country[km_results$cluster %in% which(km_results$size == 1)]
 
 clust_centers <- round(t(km_results$centers), 3)
 print(clust_centers)
