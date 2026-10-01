@@ -186,3 +186,21 @@ plot_data %>%
 ##Macao has a very low PC3 and very high PC4 because of its high tourism density
 
 
+##COMBINING TOURISM WITH CLUSTERS AND PC1
+cluster_data <- tibble(country = rownames(tourismdata_2018_num),
+                       cluster = factor(km_results$cluster))
+
+pc_density <- pc_density %>%
+  left_join(cluster_data, by = "country")
+
+plot1<- ggplot(pc_density, aes(x = PC1, y = tourism_density)) +
+  geom_point(aes(color = cluster), size = 3, alpha = 0.7) +
+  geom_smooth(method = "loess", se = FALSE, color = "black") +
+  labs(title = "Tourism Density vs. First Principal Component, by Cluster",
+       x = "First Principal Component",
+       y = "Tourism Density (Tourists per Resident)",
+       color = "Cluster") +
+  theme_minimal()
+
+ggsave("tourism_density_vs_pc1.pdf", plot = plot1, width = 8, height = 6, dpi = 300)
+
