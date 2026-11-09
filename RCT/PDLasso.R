@@ -77,3 +77,5 @@ pds_model <- rlassoEffect(
 summary(pds_model)
 confint(pds_model)
 
+pds_model$coefficients.reg
+
