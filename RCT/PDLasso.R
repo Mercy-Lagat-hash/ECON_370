@@ -75,7 +75,23 @@ lasso_low <- glmnet::glmnet(
 )
 ###
 
+grid <- 10^seq(0, -3, length = 100)
 
+set.seed(123)
+lasso_cv <- cv.glmnet(
+  X_imputed, Y_clean,
+  alpha = 1,
+  lambda = grid
+)
+
+plot(lasso_cv)
+
+# Selected tuning parameter
+lasso_cv$lambda.min
+
+# Coefficients at that tuning parameter
+coef(lasso_cv, s = "lambda.min")
+####
 
 lasso_low <- glmnet(X_imputed, Y_clean, alpha = 1, lambda = 0.001)
 lasso_low$beta
