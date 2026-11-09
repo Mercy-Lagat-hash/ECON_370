@@ -112,3 +112,28 @@ fig_cate <- ggplot(CATE_df, aes(x = CATE, fill = group)) +
   theme(legend.position = "bottom")
 fig_cate
 ggsave("Figure3_CATE_histogram.png", fig_cate, width = 8, height = 4.5, dpi = 300)
+
+## TABLE: Causal forest results ------------------------------------
+
+ate_gov   <- average_treatment_effect(cf, subset = Data_Households$BL_GvtChw == 1)
+ate_nogov <- average_treatment_effect(cf, subset = Data_Households$BL_GvtChw == 0)
+
+cf_table <- data.frame(
+  Estimate = c("ATE, all households",
+               "ATE, villages with gov worker in 2010",
+               "ATE, villages without gov worker in 2010",
+               "ATE, above-median CATE",
+               "ATE, below-median CATE",
+               "Calibration: mean forest prediction",
+               "Calibration: differential forest prediction"),
+  Coefficient = c(ATE["estimate"], ate_gov["estimate"], ate_nogov["estimate"],
+                  ate_high["estimate"], ate_low["estimate"],
+                  cf_test[1, 1], cf_test[2, 1]),
+  Std_Error   = c(ATE["std.err"], ate_gov["std.err"], ate_nogov["std.err"],
+                  ate_high["std.err"], ate_low["std.err"],
+                  cf_test[1, 2], cf_test[2, 2])
+)
+cf_table[, 2:3] <- round(cf_table[, 2:3], 3)
+
+cf_table
+write.csv(cf_table, "Table3_causal_forest.csv", row.names = FALSE)
