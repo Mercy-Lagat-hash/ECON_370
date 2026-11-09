@@ -85,3 +85,30 @@ ATE
 ate_high
 ate_low
 
+## FIGURES ---------------------------------------------------------
+
+# Figure 2: Variable importance
+imp_measure$variable <- factor(imp_measure$variable,
+                               levels = rev(imp_measure$variable))
+
+fig_imp <- ggplot(imp_measure, aes(x = importance, y = variable)) +
+  geom_col(fill = "steelblue") +
+  labs(x = "Variable importance", y = NULL,
+       title = "Predictors of treatment effect heterogeneity") +
+  theme_minimal(base_size = 13)
+fig_imp
+ggsave("Figure2_variable_importance.png", fig_imp, width = 8, height = 4.5, dpi = 300)
+
+# Figure 3: Distribution of CATEs, by gov worker at baseline
+CATE_df$group <- ifelse(Data_Households$BL_GvtChw == 1,
+                        "Gov worker in 2010", "No gov worker in 2010")
+
+fig_cate <- ggplot(CATE_df, aes(x = CATE, fill = group)) +
+  geom_histogram(bins = 40, alpha = 0.6, position = "identity") +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  labs(x = "Estimated treatment effect (CATE)", y = "Households", fill = NULL,
+       title = "Estimated treatment effects by baseline government presence") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+fig_cate
+ggsave("Figure3_CATE_histogram.png", fig_cate, width = 8, height = 4.5, dpi = 300)
