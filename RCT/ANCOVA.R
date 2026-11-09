@@ -6,8 +6,11 @@ library(haven)
 library(dplyr)
 library(fixest)
 data_path <-"/Users/mercylagat/Documents/ECON_370/Data and Do-Files/Data_Households.dta"
-
 Data_Households <- read_dta("Data_Households.dta")
+##IMPUTING
+vars_missing <- names(Data_Households)[colSums(is.na(Data_Households)) > 0]
+Data_Households<- Data_Households %>% mutate(across(all_of(vars_missing),~ replace(., is.na(.), mean(., na.rm = TRUE))))
+
 
 required_var <- c(
   "EL_care_GvtChw",
