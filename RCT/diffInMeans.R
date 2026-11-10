@@ -24,7 +24,7 @@ Data_Households <- read_dta("Data_Households.dta")
 # Remove observations with missing outcome, treatment, or village ID
 
 data <- Data_Households %>%
-  filter(BL_GvtChw == 1,
+  filter(
          !is.na(EL_care_GvtChw),
          !is.na(treat))
 
