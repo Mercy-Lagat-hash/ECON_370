@@ -26,8 +26,7 @@ Data_Households <- read_dta("Data_Households.dta")
 data <- Data_Households %>%
   filter(BL_GvtChw == 1,
          !is.na(EL_care_GvtChw),
-         !is.na(treat),
-         !is.na(village_code))
+         !is.na(treat))
 
 
 # Step 2: Calculate treatment and control means -----------------------
