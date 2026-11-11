@@ -69,6 +69,33 @@ ate_high = average_treatment_effect ( cf , subset = high_effect )
 ate_low = average_treatment_effect( cf , subset = !high_effect )
 
 
+###########
+cate_hist <- ggplot(CATE_df, aes(x = CATE)) +
+  geom_histogram(
+    bins = 20,
+    fill = "steelblue",
+    color = "white"
+  ) +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Distribution of Estimated Treatment Effects",
+    x = "Estimated CATE",
+    y = "Number of Households"
+  ) +
+  theme_minimal()
+
+cate_hist
+
+ggsave(
+  "cate_histogram.pdf",
+  plot = cate_hist,
+  width = 7,
+  height = 5
+)
+#######
+
+
+
 #Calibration
 cf_test <- test_calibration(cf)
 cf_test
