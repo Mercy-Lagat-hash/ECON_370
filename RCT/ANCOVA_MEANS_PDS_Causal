@@ -1,0 +1,635 @@
+## CAUSAL FOREST
+
+
+setwd("/Users/mercylagat/Documents/ECON_370/Data and Do-Files")
+library(grf)
+library(fixest)
+library(tidyverse)
+library(fastDummies)
+library(haven)
+
+# step 1: load and prep EMERGE data --------------------------------------------
+
+## load the data set ECON370-lab9-cf-data.csv directly from github
+## convert the enumerator and strata variables to category dummies
+## drop observations missing the outcome variable, story_comp
+## impute other missing values 
+data_path <-"/Users/mercylagat/Documents/ECON_370/Data and Do-Files/Data_Households.dta"
+
+Data_Households <- read_dta("Data_Households.dta")
+Data_Households <- Data_Households %>%
+  select(
+    -`_ENDLINE_HOUSEHOLD_DATA_______`,
+    -`_BASELINE_VILLAGE_DATA_______`,
+    -`_ENDLINE_VILLAGE_DATA_______`,
+    -`_NGO_WORKERS_XTICS_______`,
+    -`_BASELINE_HOUSEHOLD_DATA_______`,
+    -`_MORE_______`
+  )
+# Define variables and matrices needed for causal forest ---------------
+
+Y <- as.vector(Data_Households$EL_care_GvtChw)
+sum(is.na(Y))
+W <- as.vector(Data_Households$treat)
+village <- as.integer(Data_Households$village_codeU)
+
+
+## 3d. define covars as your clean data frame minus the variables above...
+## ... and define X as a matrix version of covars
+covars <- Data_Households[, c(
+  "BL_GvtChw",            
+  "BL_scarce",
+  "BL_care_GvtChw",       
+  "BL_care_Hosp",         
+  "BL_Dist_PrivClinic10", 
+  "BL_Dist_Hosp10",       
+  "BL_HH_number",         
+  "BL_index_wealth",
+  "BL_care_TradHeal",
+  "BL_care_DrugStore",
+  "BL_care_PrivHospClin",
+  "BL_farmer",
+  "BL_schoolopen",
+  "BL_nbattend",
+  "BL_Age_Head",
+  "BL_AbovePrimary",
+  "BL_Number_Infants",
+  "BL_health_index",
+  "BL_TradHealer",
+  "BL_DrugStore",
+  "BL_infants_per_HH",
+  "BL_infants_per_HH_died",
+  "BL_share_primary"
+)]
+X <- as.matrix(zap_labels(covars))
+str(covars)
+## 3e. define W_hat and Y_hat, your predicted values of treatment and Y
+
+W_hat <- ave(W, Data_Households$area_code)
+
+
+##causal forest
+cf <- causal_forest(X, Y, W, W.hat = W_hat,
+                    clusters = village, tune.parameters = "all", seed = 8675309)
+
+ATE<- average_treatment_effect(cf,target.sample= "all")
+
+#CATE
+CATE <- predict(cf)$predictions
+CATE_df <- data.frame(CATE = as.vector(CATE))
+
+#Calibration
+cf_test <- test_calibration(cf)
+cf_test
+#important predictors
+var_imp<- variable_importance(cf)
+imp_measure<- data.frame(variable=names(covars), importance = var_imp)
+
+imp_measure <- imp_measure %>%
+  arrange(desc(importance))
+
+head(imp_measure, 10)
+##Results
+ATE
+ate_high
+ate_low
+
+## FIGURES ---------------------------------------------------------
+
+# Figure 2: Variable importance
+
+# Readable labels for each variable
+nice_names <- c(
+  BL_GvtChw              = "Gov. worker",
+  BL_scarce              = "Labor scarcity",
+  BL_care_GvtChw         = "Care: gov. worker",
+  BL_care_Hosp           = "Care: gov. clinic",
+  BL_care_TradHeal       = "Care: healer",
+  BL_care_DrugStore      = "Care: drug store",
+  BL_care_PrivHospClin   = "Care: private clinic",
+  BL_Dist_PrivClinic10   = "Private clinic nearby",
+  BL_Dist_Hosp10         = "Gov. clinic nearby",
+  BL_HH_number           = "Village size",
+  BL_index_wealth        = "Wealth",
+  BL_farmer              = "Farmer",
+  BL_schoolopen          = "School open",
+  BL_nbattend            = "Kids in school",
+  BL_Age_Head            = "Head's age",
+  BL_AbovePrimary        = "Head's education",
+  BL_Number_Infants      = "HH infants",
+  BL_health_index        = "Health behavior",
+  BL_TradHealer          = "Healer in village",
+  BL_DrugStore           = "Drug store in village",
+  BL_infants_per_HH      = "Infants per HH",
+  BL_infants_per_HH_died = "Infant deaths",
+  BL_share_primary       = "Share primary educ."
+)
+imp_measure$variable <- factor(as.character(imp_measure$variable),
+                               levels = rev(as.character(imp_measure$variable)))
+
+fig_imp <- ggplot(imp_measure, aes(x = importance, y = variable)) +
+  geom_col(fill = "steelblue") +
+  scale_y_discrete(labels = nice_names) +
+  labs(x = "Variable importance", y = NULL,
+       title = "Variable Importance in Causal Forest") +
+  theme_minimal(base_size = 13)
+fig_imp
+ggsave("Figure2_variable_importance.png", fig_imp, width = 8, height = 6, dpi = 300)
+###testing variables 
+top_vars <- unique(c(as.character(imp_measure$variable[1:10]), "BL_GvtChw"))
+top_vars                                   # should show real variable names
+best_linear_projection(cf, X[, top_vars])
+
+
+## interaction with BL_GvtChw
+ate_gov   <- average_treatment_effect(cf, subset = Data_Households$BL_GvtChw == 1)
+ate_nogov <- average_treatment_effect(cf, subset = Data_Households$BL_GvtChw == 0)
+
+## interaction with BL_index_wealth
+rich   <- average_treatment_effect(cf, subset = Data_Households$BL_GvtChw == 1)
+poor <- average_treatment_effect(cf, subset = Data_Households$BL_GvtChw == 0)
+## interaction with BL_HH_number
+high_HH_number   <- average_treatment_effect(cf, subset = Data_Households$BL_GvtChw == 1)
+high_HH_number <- average_treatment_effect(cf, subset = Data_Households$BL_GvtChw == 0)
+## interaction with BL_scarce
+abundance <- average_treatment_effect(cf, subset = Data_Households$BL_GvtChw == 1)
+scarce <- average_treatment_effect(cf, subset = Data_Households$BL_GvtChw == 0)
+
+## HETEROGENEITY: interaction regressions ---------------------------
+library(gridExtra)
+
+h <- zap_labels(Data_Households)
+
+# Median splits: 1 = above median, 0 = at or below median
+h$wealth_high <- as.numeric(h$BL_index_wealth > median(h$BL_index_wealth))
+h$size_large  <- as.numeric(h$BL_HH_number    > median(h$BL_HH_number))
+
+h1 <- feols(EL_care_GvtChw ~ treat * BL_GvtChw | area_code,
+            data = h, vcov = ~village_codeU)
+h2 <- feols(EL_care_GvtChw ~ treat * wealth_high | area_code,
+            data = h, vcov = ~village_codeU)
+h3 <- feols(EL_care_GvtChw ~ treat * size_large | area_code,
+            data = h, vcov = ~village_codeU)
+h4 <- feols(EL_care_GvtChw ~ treat * BL_scarce | area_code,
+            data = h, vcov = ~village_codeU)
+h5 <- feols(EL_care_GvtChw ~ treat * BL_GvtChw + treat * wealth_high +
+              treat * size_large + treat * BL_scarce | area_code,
+            data = h, vcov = ~village_codeU)
+
+## ---- Effect of NGO entry in each group (for the slides) ----
+fmt <- function(est, se) sprintf("%.3f (%.3f)", est, se)
+
+group_effects <- function(m, v, var_label, lo_label, hi_label) {
+  b <- coef(m); V <- vcov(m); int <- paste0("treat:", v)
+  data.frame(
+    Variable    = var_label,
+    Group_0     = lo_label,
+    Effect_0    = fmt(b["treat"], sqrt(V["treat", "treat"])),
+    Group_1     = hi_label,
+    Effect_1    = fmt(b["treat"] + b[int],
+                      sqrt(V["treat", "treat"] + V[int, int] + 2 * V["treat", int])),
+    Difference  = fmt(b[int], sqrt(V[int, int])),
+    p_value     = sprintf("%.3f", pvalue(m)[int])
+  )
+}
+
+het_summary <- rbind(
+  group_effects(h1, "BL_GvtChw",   "Gov worker in 2010", "No",           "Yes"),
+  group_effects(h2, "wealth_high", "Village wealth",     "Below median", "Above median"),
+  group_effects(h3, "size_large",  "Village size",       "Below median", "Above median"),
+  group_effects(h4, "BL_scarce",   "Skilled labor",      "Abundant",     "Scarce")
+)
+rownames(het_summary) <- NULL
+het_summary
+
+pdf("Table4_heterogeneity.pdf", width = 13, height = 3)
+grid.arrange(tableGrob(het_summary, rows = NULL),
+             top = "Table 4: Effect of NGO entry on government health-worker care, by subgroup")
+dev.off()
+
+
+## TABLE: Calibration test -----------------------------------------
+library(gridExtra)
+
+cal <- test_calibration(cf)
+
+calib_table <- data.frame(
+  Term     = c("Mean forest pred.", "Differential forest pred."),
+  Estimate = round(cal[, 1], 3),
+  SE       = round(cal[, 2], 3),
+  p_value  = sprintf("%.3f", cal[, 4])
+)
+rownames(calib_table) <- NULL
+calib_table
+
+pdf("Table5_calibration.pdf", width = 6, height = 1.6)
+grid.arrange(tableGrob(calib_table, rows = NULL,
+                       theme = ttheme_default(base_size = 11)),
+             top = "Calibration test (23 covariates)")
+dev.off()
+
+
+####ANCOVA, PDS, MEANS
+## RCT Project 
+#install.packages("haven")
+#install.packages("fixest")
+setwd("/Users/mercylagat/Documents/ECON_370/Data and Do-Files")
+library(haven)
+library(dplyr)
+library(fixest)
+data_path <-"/Users/mercylagat/Documents/ECON_370/Data and Do-Files/Data_Households.dta"
+Data_Households <- read_dta("Data_Households.dta")
+
+##IMPUTING (baseline variables only; drop rows with missing outcome)
+Data_Households <- Data_Households %>% filter(!is.na(EL_care_GvtChw))
+
+bl_missing <- names(Data_Households)[startsWith(names(Data_Households), "BL_") &
+                                       colSums(is.na(Data_Households)) > 0]
+for (v in bl_missing) {
+  Data_Households[[paste0(v, "_miss")]] <- as.numeric(is.na(Data_Households[[v]]))
+  Data_Households[[v]][is.na(Data_Households[[v]])] <- mean(Data_Households[[v]], na.rm = TRUE)
+}
+
+required_var <- c(
+  "EL_care_GvtChw",
+  "BL_care_GvtChw",
+  "treat",
+  "area_code",
+  "village_codeU"
+)
+
+setdiff(required_var, names(Data_Households))
+
+##ANCOVA
+ancova <- feols(
+  EL_care_GvtChw ~ treat + BL_care_GvtChw | area_code,
+  data = Data_Households,
+  vcov = ~village_codeU
+)
+
+summary(ancova)
+
+#sample size
+nobs(ancova)
+#se
+se(ancova)
+
+
+## Caleb: Post-double-selection lasso
+
+library(haven)
+library(glmnet)
+library(hdm)
+
+
+Household_data <- read_dta("Data_Households.dta")
+
+## 1. Define outcome and treatment
+
+Y <- as.numeric(Household_data$EL_care_GvtChw)
+D <- as.numeric(Household_data$treat)
+
+# Check that treatment is coded 0/1
+stopifnot(all(na.omit(D) %in% c(0, 1)))
+
+## 2. Select candidate baseline controls
+
+# Review this list to confirm all are measured before treatment
+baseline_vars <- grep(
+  "^BL_",
+  names(Household_data),
+  value = TRUE
+)
+
+print(baseline_vars)
+
+X <- as.data.frame(Household_data[, baseline_vars])
+
+## 3. Keep rows with observed outcome AND treatment
+
+keep <- !is.na(Y) & !is.na(D)
+
+Y_clean <- Y[keep]
+D_clean <- D[keep]
+X_clean <- X[keep, , drop = FALSE]
+
+# Remove entirely missing or constant controls
+usable <- vapply(
+  X_clean,
+  function(z) length(unique(z[!is.na(z)])) > 1L,
+  logical(1)
+)
+
+X_clean <- X_clean[, usable, drop = FALSE]
+
+## 4. Impute missing predictors and encode categorical controls
+
+# Convert any numeric categorical controls to factors before this step
+X_imputed <- makeX(X_clean, na.impute = TRUE)
+
+# Remove any constant columns after preprocessing
+nonconstant <- apply(X_imputed, 2, function(z) var(z) > 0)
+X_imputed <- X_imputed[, nonconstant, drop = FALSE]
+
+stopifnot(
+  nrow(X_imputed) == length(Y_clean),
+  length(Y_clean) == length(D_clean),
+  all(is.finite(X_imputed))
+)
+
+## 5. Fit post-double-selection lasso
+
+set.seed(123)
+
+pds_model <- rlassoEffect(
+  x = X_imputed,
+  y = Y_clean,
+  d = D_clean,
+  method = "double selection",
+  post = TRUE
+)
+
+## 6. Report the treatment effect
+
+summary(pds_model)
+confint(pds_model)
+
+pds_model$coefficients.reg
+# ECON 370: Project 2
+# Standard Difference-in-Means Specification
+# Paper: The Impact of NGO-Provided Aid on Government Capacity
+
+
+# Step 0: Load packages ------------------------------------------------
+# Install packages (only need to do this once)
+#install.packages("dplyr")
+#install.packages("fixest")
+#install.packages("haven")
+
+# Load packages
+library(dplyr)
+library(fixest)
+library(haven)
+
+
+# Load the household dataset
+Data_Households <- read_dta("Data_Households.dta")
+
+# Step 1: Prepare the data --------------------------------------------
+
+# Keep only villages with a government health worker in 2010
+# Remove observations with missing outcome, treatment, or village ID
+
+data <- Data_Households %>%
+  filter(
+    !is.na(EL_care_GvtChw),
+    !is.na(treat))
+
+
+# Step 2: Calculate treatment and control means -----------------------
+
+# Calculate average government healthcare receipt in 2012
+# treat = 1: NGO treatment group
+# treat = 0: control group
+
+group_means <- data %>%
+  group_by(treat) %>%
+  summarise(
+    mean_healthcare = mean(EL_care_GvtChw),
+    observations = n(),
+    .groups = "drop"
+  )
+
+# Display treatment and control means
+print(group_means)
+
+
+# Step 3: Calculate the difference in means ---------------------------
+
+# Treatment effect = treatment mean - control mean
+
+difference <- group_means$mean_healthcare[group_means$treat == 1] -
+  group_means$mean_healthcare[group_means$treat == 0]
+
+# Display the treatment effect
+print(difference)
+## =====================================================================
+## COMPARISON TABLE: Diff. in means vs ANCOVA vs PDS lasso
+## =====================================================================
+library(gridExtra)
+
+# (1) Difference in means, as a regression so it has a standard error
+#     (gives exactly the same number as `difference` above)
+dim_model <- feols(EL_care_GvtChw ~ treat, data = data, vcov = ~village_codeU)
+
+# (2) ANCOVA: already estimated above as `ancova`
+
+# (3) PDS lasso: rerun with the controls the lasso selected,
+#     adding area FE and village-clustered SEs to match the other columns
+sel       <- colnames(X_imputed)[pds_model$selection.index]
+sel_clean <- make.names(sel)
+sel
+
+pds_df <- data.frame(
+  EL_care_GvtChw = Y_clean,
+  treat          = D_clean,
+  area_code      = as.numeric(Household_data$area_code[keep]),
+  village_codeU  = as.numeric(Household_data$village_codeU[keep]),
+  X_imputed[, sel, drop = FALSE]
+)
+names(pds_df) <- make.names(names(pds_df))
+
+pds_fe <- feols(
+  as.formula(paste("EL_care_GvtChw ~ treat",
+                   if (length(sel)) paste("+", paste(sel_clean, collapse = " + ")) else "",
+                   "| area_code")),
+  data = pds_df, vcov = ~village_codeU)
+
+# ---- Build the table: estimate on top, SE underneath ----
+column <- function(m, controls, fe) {
+  c(sprintf("%.3f", coef(m)["treat"]),
+    sprintf("(%.3f)", se(m)["treat"]),
+    controls, fe,
+    format(nobs(m), big.mark = ","))
+}
+
+comparison <- data.frame(
+  " "              = c("NGO entry", "", "Controls", "Area FE", "N"),
+  "Diff. in means" = column(dim_model, "None", "No"),
+  "ANCOVA"         = column(ancova, "Baseline outcome", "Yes"),
+  "PDS lasso"      = column(pds_fe, paste(length(sel), "selected"), "Yes"),
+  check.names = FALSE
+)
+comparison
+
+pdf("Table2_comparison.pdf", width = 7, height = 2.5)
+grid.arrange(tableGrob(comparison, rows = NULL,
+                       theme = ttheme_minimal(base_size = 11)),
+             top = "Effect of NGO entry on government health-worker care")
+dev.off()
+
+
+##### 8 VARIABLES CAUSAL FOREST - MAIN ONE USED
+## CAUSAL FOREST
+
+
+setwd("/Users/mercylagat/Documents/ECON_370/Data and Do-Files")
+library(grf)
+library(fixest)
+library(tidyverse)
+library(fastDummies)
+library(haven)
+
+# step 1: load and prep EMERGE data --------------------------------------------
+
+## load the data set ECON370-lab9-cf-data.csv directly from github
+## convert the enumerator and strata variables to category dummies
+## drop observations missing the outcome variable, story_comp
+## impute other missing values 
+data_path <-"/Users/mercylagat/Documents/ECON_370/Data and Do-Files/Data_Households.dta"
+
+Data_Households <- read_dta("Data_Households.dta")
+Data_Households <- Data_Households %>%
+  select(
+    -`_ENDLINE_HOUSEHOLD_DATA_______`,
+    -`_BASELINE_VILLAGE_DATA_______`,
+    -`_ENDLINE_VILLAGE_DATA_______`,
+    -`_NGO_WORKERS_XTICS_______`,
+    -`_BASELINE_HOUSEHOLD_DATA_______`,
+    -`_MORE_______`
+  )
+# Define variables and matrices needed for causal forest ---------------
+
+Y <- as.vector(Data_Households$EL_care_GvtChw)
+sum(is.na(Y))
+W <- as.vector(Data_Households$treat)
+village <- as.integer(Data_Households$village_codeU)
+
+
+## 3d. define covars as your clean data frame minus the variables above...
+## ... and define X as a matrix version of covars
+covars <- Data_Households[, c(
+  "BL_GvtChw",            
+  "BL_scarce",
+  "BL_care_GvtChw",       
+  "BL_care_Hosp",         
+  "BL_Dist_PrivClinic10", 
+  "BL_Dist_Hosp10",       
+  "BL_HH_number",         
+  "BL_index_wealth"       
+)]
+X <- as.matrix(zap_labels(covars))
+str(covars)
+## 3e. define W_hat and Y_hat, your predicted values of treatment and Y
+
+W_hat <- ave(W, Data_Households$area_code)
+
+
+##causal forest
+cf <- causal_forest(X, Y, W, W.hat = W_hat,
+                    clusters = village, tune.parameters = "all", seed = 8675309)
+
+ATE<- average_treatment_effect(cf,target.sample= "all")
+
+#CATE
+CATE <- predict(cf)$predictions
+CATE_df <- data.frame(CATE = as.vector(CATE))
+# Compare regions with high and low estimated CATEs
+
+
+#Calibration
+cf_test <- test_calibration(cf)
+cf_test
+#important predictors
+var_imp<- variable_importance(cf)
+imp_measure<- data.frame(variable=names(covars), importance = var_imp)
+
+imp_measure <- imp_measure %>%
+  arrange(desc(importance))
+
+head(imp_measure, 5)
+##Results
+ATE
+
+## FIGURES ---------------------------------------------------------
+
+# Figure 2: Variable importance
+nice_names <- c(
+  BL_GvtChw            = "Gov. worker",
+  BL_scarce            = "Labor scarcity",
+  BL_care_GvtChw       = "Care: gov. worker",
+  BL_care_Hosp         = "Care: gov. clinic",
+  BL_Dist_PrivClinic10 = "Private clinic nearby",
+  BL_Dist_Hosp10       = "Gov. clinic nearby",
+  BL_HH_number         = "Village size",
+  BL_index_wealth      = "Wealth"
+)
+
+imp_measure$variable <- factor(as.character(imp_measure$variable),
+                               levels = rev(as.character(imp_measure$variable)))
+
+fig_imp <- ggplot(imp_measure, aes(x = importance, y = variable)) +
+  geom_col(fill = "steelblue") +
+  scale_y_discrete(labels = nice_names) +
+  labs(x = "Variable importance", y = NULL,
+       title = "Variable Importance in Causal Forest (8 covariates)") +
+  theme_minimal(base_size = 13)
+fig_imp
+ggsave("Figure2_variable_importance_8vars.png", fig_imp, width = 8, height = 4.5, dpi = 300)
+# Figure 3: Distribution of CATEs, by gov worker at baseline
+CATE_df$group <- ifelse(Data_Households$BL_GvtChw == 1,
+                        "Gov worker in 2010", "No gov worker in 2010")
+
+fig_cate <- ggplot(CATE_df, aes(x = CATE, fill = group)) +
+  geom_histogram(bins = 40, alpha = 0.6, position = "identity") +
+  geom_vline(xintercept = 0, linetype = "dashed") +
+  labs(x = "Estimated treatment effect (CATE)", y = "Households", fill = NULL,
+       title = "Estimated treatment effects by baseline government presence") +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "bottom")
+fig_cate
+ggsave("Figure3_CATE_histogram.png", fig_cate, width = 8, height = 4.5, dpi = 300)
+
+## TABLE: Causal forest results ------------------------------------
+
+ate_gov   <- average_treatment_effect(cf, subset = Data_Households$BL_GvtChw == 1)
+ate_nogov <- average_treatment_effect(cf, subset = Data_Households$BL_GvtChw == 0)
+
+cf_table <- data.frame(
+  Estimate = c("ATE, all households",
+               "ATE, villages with gov worker in 2010",
+               "ATE, villages without gov worker in 2010",
+               "ATE, above-median CATE",
+               "ATE, below-median CATE",
+               "Calibration: mean forest prediction",
+               "Calibration: differential forest prediction"),
+  Coefficient = c(ATE["estimate"], ate_gov["estimate"], ate_nogov["estimate"],
+                  ate_high["estimate"], ate_low["estimate"],
+                  cf_test[1, 1], cf_test[2, 1]),
+  Std_Error   = c(ATE["std.err"], ate_gov["std.err"], ate_nogov["std.err"],
+                  ate_high["std.err"], ate_low["std.err"],
+                  cf_test[1, 2], cf_test[2, 2])
+)
+cf_table[, 2:3] <- round(cf_table[, 2:3], 3)
+
+cf_table
+write.csv(cf_table, "Table3_causal_forest.csv", row.names = FALSE)
+
+## TABLE: Calibration test -----------------------------------------
+library(gridExtra)
+
+calib_table <- data.frame(
+  Term     = c("Mean forest pred.", "Differential forest pred."),
+  Estimate = round(cf_test[, 1], 3),
+  SE       = round(cf_test[, 2], 3),
+  p_value  = sprintf("%.3f", cf_test[, 4])
+)
+rownames(calib_table) <- NULL
+calib_table
+
+pdf("Table5_calibration_8vars.pdf", width = 6, height = 1.6)
+grid.arrange(tableGrob(calib_table, rows = NULL,
+                       theme = ttheme_default(base_size = 11)),
+             top = "Calibration test (8 covariates)")
+dev.off()
+
