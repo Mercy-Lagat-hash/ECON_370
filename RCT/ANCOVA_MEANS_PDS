@@ -1,0 +1,237 @@
+## RCT Project 
+#install.packages("haven")
+#install.packages("fixest")
+setwd("/Users/mercylagat/Documents/ECON_370/Data and Do-Files")
+library(haven)
+library(dplyr)
+library(fixest)
+data_path <-"/Users/mercylagat/Documents/ECON_370/Data and Do-Files/Data_Households.dta"
+Data_Households <- read_dta("Data_Households.dta")
+
+##IMPUTING (baseline variables only; drop rows with missing outcome)
+Data_Households <- Data_Households %>% filter(!is.na(EL_care_GvtChw))
+
+bl_missing <- names(Data_Households)[startsWith(names(Data_Households), "BL_") &
+                                       colSums(is.na(Data_Households)) > 0]
+for (v in bl_missing) {
+  Data_Households[[paste0(v, "_miss")]] <- as.numeric(is.na(Data_Households[[v]]))
+  Data_Households[[v]][is.na(Data_Households[[v]])] <- mean(Data_Households[[v]], na.rm = TRUE)
+}
+
+required_var <- c(
+  "EL_care_GvtChw",
+  "BL_care_GvtChw",
+  "treat",
+  "area_code",
+  "village_codeU"
+)
+
+setdiff(required_var, names(Data_Households))
+
+##ANCOVA
+ancova <- feols(
+  EL_care_GvtChw ~ treat + BL_care_GvtChw | area_code,
+  data = Data_Households,
+  vcov = ~village_codeU
+)
+
+summary(ancova)
+
+#sample size
+nobs(ancova)
+#se
+se(ancova)
+
+
+## Caleb: Post-double-selection lasso
+
+library(haven)
+library(glmnet)
+library(hdm)
+
+
+Household_data <- read_dta("Data_Households.dta")
+
+## 1. Define outcome and treatment
+
+Y <- as.numeric(Household_data$EL_care_GvtChw)
+D <- as.numeric(Household_data$treat)
+
+# Check that treatment is coded 0/1
+stopifnot(all(na.omit(D) %in% c(0, 1)))
+
+## 2. Select candidate baseline controls
+
+# Review this list to confirm all are measured before treatment
+baseline_vars <- grep(
+  "^BL_",
+  names(Household_data),
+  value = TRUE
+)
+
+print(baseline_vars)
+
+X <- as.data.frame(Household_data[, baseline_vars])
+
+## 3. Keep rows with observed outcome AND treatment
+
+keep <- !is.na(Y) & !is.na(D)
+
+Y_clean <- Y[keep]
+D_clean <- D[keep]
+X_clean <- X[keep, , drop = FALSE]
+
+# Remove entirely missing or constant controls
+usable <- vapply(
+  X_clean,
+  function(z) length(unique(z[!is.na(z)])) > 1L,
+  logical(1)
+)
+
+X_clean <- X_clean[, usable, drop = FALSE]
+
+## 4. Impute missing predictors and encode categorical controls
+
+# Convert any numeric categorical controls to factors before this step
+X_imputed <- makeX(X_clean, na.impute = TRUE)
+
+# Remove any constant columns after preprocessing
+nonconstant <- apply(X_imputed, 2, function(z) var(z) > 0)
+X_imputed <- X_imputed[, nonconstant, drop = FALSE]
+
+stopifnot(
+  nrow(X_imputed) == length(Y_clean),
+  length(Y_clean) == length(D_clean),
+  all(is.finite(X_imputed))
+)
+
+## 5. Fit post-double-selection lasso
+
+set.seed(123)
+
+pds_model <- rlassoEffect(
+  x = X_imputed,
+  y = Y_clean,
+  d = D_clean,
+  method = "double selection",
+  post = TRUE
+)
+
+## 6. Report the treatment effect
+
+summary(pds_model)
+confint(pds_model)
+
+pds_model$coefficients.reg
+# ECON 370: Project 2
+# Standard Difference-in-Means Specification
+# Paper: The Impact of NGO-Provided Aid on Government Capacity
+
+
+# Step 0: Load packages ------------------------------------------------
+# Install packages (only need to do this once)
+#install.packages("dplyr")
+#install.packages("fixest")
+#install.packages("haven")
+
+# Load packages
+library(dplyr)
+library(fixest)
+library(haven)
+
+
+# Load the household dataset
+Data_Households <- read_dta("Data_Households.dta")
+
+# Step 1: Prepare the data --------------------------------------------
+
+# Keep only villages with a government health worker in 2010
+# Remove observations with missing outcome, treatment, or village ID
+
+data <- Data_Households %>%
+  filter(
+    !is.na(EL_care_GvtChw),
+    !is.na(treat))
+
+
+# Step 2: Calculate treatment and control means -----------------------
+
+# Calculate average government healthcare receipt in 2012
+# treat = 1: NGO treatment group
+# treat = 0: control group
+
+group_means <- data %>%
+  group_by(treat) %>%
+  summarise(
+    mean_healthcare = mean(EL_care_GvtChw),
+    observations = n(),
+    .groups = "drop"
+  )
+
+# Display treatment and control means
+print(group_means)
+
+
+# Step 3: Calculate the difference in means ---------------------------
+
+# Treatment effect = treatment mean - control mean
+
+difference <- group_means$mean_healthcare[group_means$treat == 1] -
+  group_means$mean_healthcare[group_means$treat == 0]
+
+# Display the treatment effect
+print(difference)
+## =====================================================================
+## COMPARISON TABLE: Diff. in means vs ANCOVA vs PDS lasso
+## =====================================================================
+library(gridExtra)
+
+# (1) Difference in means, as a regression so it has a standard error
+#     (gives exactly the same number as `difference` above)
+dim_model <- feols(EL_care_GvtChw ~ treat, data = data, vcov = ~village_codeU)
+
+# (2) ANCOVA: already estimated above as `ancova`
+
+# (3) PDS lasso: rerun with the controls the lasso selected,
+#     adding area FE and village-clustered SEs to match the other columns
+sel       <- colnames(X_imputed)[pds_model$selection.index]
+sel_clean <- make.names(sel)
+sel
+
+pds_df <- data.frame(
+  EL_care_GvtChw = Y_clean,
+  treat          = D_clean,
+  area_code      = as.numeric(Household_data$area_code[keep]),
+  village_codeU  = as.numeric(Household_data$village_codeU[keep]),
+  X_imputed[, sel, drop = FALSE]
+)
+names(pds_df) <- make.names(names(pds_df))
+
+pds_fe <- feols(
+  as.formula(paste("EL_care_GvtChw ~ treat",
+                   if (length(sel)) paste("+", paste(sel_clean, collapse = " + ")) else "",
+                   "| area_code")),
+  data = pds_df, vcov = ~village_codeU)
+
+# ---- Build the table: estimate on top, SE underneath ----
+column <- function(m, controls, fe) {
+  c(sprintf("%.3f", coef(m)["treat"]),
+    sprintf("(%.3f)", se(m)["treat"]),
+    controls, fe,
+    format(nobs(m), big.mark = ","))
+}
+
+comparison <- data.frame(
+  " "              = c("NGO entry", "", "Controls", "Area FE", "N"),
+  "Diff. in means" = column(dim_model, "None", "No"),
+  "ANCOVA"         = column(ancova, "Baseline outcome", "Yes"),
+  "PDS lasso"      = column(pds_fe, paste(length(sel), "selected"), "Yes"),
+  check.names = FALSE
+)
+comparison
+
+pdf("Table2_comparison.pdf", width = 7, height = 2.5)
+grid.arrange(tableGrob(comparison, rows = NULL,
+                       theme = ttheme_minimal(base_size = 11)),
+             top = "Effect of NGO entry on government health-worker care")
+dev.off()
