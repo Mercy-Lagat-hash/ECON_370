@@ -1,0 +1,255 @@
+# ECON 370: NGO entry and government health-worker care
+# Authors: Caleb Phillips, Rediet Mekonnen, Mercy Lagat
+# Run: Rscript rct_project.r /path/to/Data_Households.dta /path/to/results
+# Keeps the submitted specifications; see README.md for methodological limits.
+
+# 1. Packages and paths -------------------------------------------------------
+packages <- c('haven', 'glmnet', 'hdm', 'fixest', 'grf', 'ggplot2')
+missing_packages <- packages[!vapply(packages, requireNamespace, logical(1), quietly = TRUE)]
+if (length(missing_packages)) stop('Install required packages: ', paste(missing_packages, collapse = ', '))
+suppressPackageStartupMessages({
+  library(haven); library(glmnet); library(hdm); library(fixest)
+  library(grf); library(ggplot2)
+})
+args <- commandArgs(trailingOnly = TRUE)
+data_path <- if (length(args)) args[1] else 'Data_Households.dta'
+out_dir <- if (length(args) >= 2) args[2] else 'results'
+if (!file.exists(data_path)) stop('Data file not found: ', data_path)
+dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
+output <- function(name) file.path(out_dir, name)
+write_table <- function(x, name) write.csv(x, output(paste0(name, '.csv')), row.names = FALSE)
+# Base grid table export avoids needing the additional gridExtra package.
+pdf_table <- function(x, name, title, width = 10, height = 3) {
+  pdf(output(paste0(name, '.pdf')), width = width, height = height)
+  on.exit(dev.off())
+  grid::grid.newpage()
+  grid::grid.text(title, y = .94, gp = grid::gpar(fontsize = 11, fontface = 'bold'))
+  cells <- rbind(names(x), as.matrix(x)); nr <- nrow(cells); nc <- ncol(cells)
+  weights <- apply(cells, 2, function(z) max(nchar(z), 5)); widths <- weights / sum(weights) * .96
+  left <- .02 + c(0, cumsum(widths)[-nc]); h <- .76 / nr
+  for (i in seq_len(nr)) for (j in seq_len(nc)) {
+    y <- .84 - (i - .5) * h
+    grid::grid.rect(x = left[j] + widths[j]/2, y = y, width = widths[j], height = h,
+                    gp = grid::gpar(fill = if (i == 1) '#d6d6d6' else if (i %% 2) '#eeeeee' else 'white', col = 'white'))
+    grid::grid.text(cells[i,j], x = left[j] + widths[j]/2, y = y,
+                    gp = grid::gpar(fontsize = 9, fontface = if (i == 1) 'bold' else 'plain'))
+  }
+}
+
+# 2. Data and validation -----------------------------------------------------
+raw <- as.data.frame(zap_labels(read_dta(data_path)))
+required <- c('EL_care_GvtChw', 'treat', 'area_code', 'village_codeU', 'BL_care_GvtChw')
+stopifnot(all(required %in% names(raw)), all(na.omit(raw$treat) %in% c(0, 1)))
+data <- raw[!is.na(raw$EL_care_GvtChw) & !is.na(raw$treat), , drop = FALSE]
+stopifnot(!anyNA(data$area_code), !anyNA(data$village_codeU))
+# Treatment must be constant within village.
+stopifnot(all(vapply(split(data$treat, data$village_codeU), function(z) length(unique(z)) == 1L, logical(1))))
+bl_vars <- grep('^BL_', names(raw), value = TRUE)
+write_table(data.frame(Variable = bl_vars, Missing = colSums(is.na(raw[, bl_vars]))), 'Baseline_missingness')
+write_table(data.frame(N_households = nrow(data), N_villages = length(unique(data$village_codeU)),
+                       N_treated_villages = length(unique(data$village_codeU[data$treat == 1]))), 'Sample_counts')
+
+# 2b. Authors' household-outcome specification (slide 6, columns 4-6) -----------
+# Reconstructed from the notes in the authors' Table 3 shown on the slide.
+# This is an addition: it was absent from the submitted script.
+author_data <- data
+author_data$private_dm <- author_data$BL_Dist_PrivClinic10 - mean(author_data$BL_Dist_PrivClinic10)
+author_data$size_dm <- author_data$BL_HH_number - mean(author_data$BL_HH_number)
+author_models <- lapply(c('EL_care_GvtChw', 'EL_care_BracChw', 'EL_care_CHW'), function(y)
+  feols(as.formula(paste(y, '~ treat_BL_GvtChw + treat_BL_GvtChwNOT + BL_GvtChw +',
+    'private_dm + size_dm + BL_GvtChw:private_dm + BL_GvtChw:size_dm | area_code')),
+    data = author_data, vcov = ~village_codeU))
+names(author_models) <- c('Government care', 'NGO care', 'Any worker care')
+author_table <- do.call(rbind, lapply(names(author_models), function(nm) {
+  m <- author_models[[nm]]; t <- coeftable(m)[c('treat_BL_GvtChw', 'treat_BL_GvtChwNOT'), , drop=FALSE]
+  data.frame(Outcome=nm, Group=c('Gov worker at baseline', 'No gov worker at baseline'),
+    Estimate=t[,1], Std_Error=t[,2], p_value=t[,4], N=nobs(m))
+}))
+write_table(author_table, 'Authors_Table3_household_columns')
+capture.output(lapply(author_models, summary), file=output('Authors_specification_summaries.txt'))
+
+# 3. Difference in means and ANCOVA ------------------------------------------
+group_means <- do.call(rbind, lapply(split(data, data$treat), function(z)
+  data.frame(treat = z$treat[1], mean_healthcare = mean(z$EL_care_GvtChw), observations = nrow(z))))
+write_table(group_means, 'Treatment_control_means')
+dim_model <- feols(EL_care_GvtChw ~ treat, data = data, vcov = ~village_codeU)
+# Preserve the submitted ANCOVA's mean imputation + missing indicators.
+ancova_data <- data
+for (v in bl_vars) if (anyNA(ancova_data[[v]])) {
+  ancova_data[[paste0(v, '_miss')]] <- as.numeric(is.na(ancova_data[[v]]))
+  ancova_data[[v]][is.na(ancova_data[[v]])] <- mean(ancova_data[[v]], na.rm = TRUE)
+}
+# The submitted specification does not include those missing indicators.
+ancova <- feols(EL_care_GvtChw ~ treat + BL_care_GvtChw | area_code,
+                data = ancova_data, vcov = ~village_codeU)
+
+# 4. PDS selection and the submitted fixed-effects refit ----------------------
+Y_clean <- data$EL_care_GvtChw; D_clean <- data$treat
+X_clean <- data[, bl_vars, drop = FALSE]
+usable <- vapply(X_clean, function(z) length(unique(z[!is.na(z)])) > 1L, logical(1))
+X_imputed <- makeX(X_clean[, usable, drop = FALSE], na.impute = TRUE)
+X_imputed <- X_imputed[, apply(X_imputed, 2, function(z) var(z) > 0), drop = FALSE]
+stopifnot(all(is.finite(X_imputed)))
+set.seed(123)
+pds_model <- rlassoEffect(x = X_imputed, y = Y_clean, d = D_clean,
+                          method = 'double selection', post = TRUE)
+# Separate selections for the slide's control list.
+lasso_y <- rlasso(x = X_imputed, y = Y_clean, post = TRUE)
+lasso_d <- rlasso(x = X_imputed, y = D_clean, post = TRUE)
+selection <- data.frame(Variable = colnames(X_imputed), Outcome = as.logical(lasso_y$index),
+                        Treatment = as.logical(lasso_d$index))
+write_table(selection, 'PDS_selection')
+sel <- colnames(X_imputed)[which(pds_model$selection.index)]
+pds_df <- data.frame(EL_care_GvtChw = Y_clean, treat = D_clean,
+                     area_code = data$area_code, village_codeU = data$village_codeU,
+                     X_imputed[, sel, drop = FALSE])
+names(pds_df) <- make.names(names(pds_df))
+pds_formula <- as.formula(paste('EL_care_GvtChw ~', paste(c('treat', make.names(sel)), collapse = ' + '), '| area_code'))
+pds_fe <- feols(pds_formula, data = pds_df, vcov = ~village_codeU)
+column <- function(m, controls, fe) c(sprintf('%.3f', coef(m)['treat']),
+  sprintf('(%.3f)', se(m)['treat']), controls, fe, format(nobs(m), big.mark = ','))
+comparison <- data.frame(Statistic = c('NGO entry', 'Standard error', 'Controls', 'Area FE', 'N'),
+  'Diff. in means' = column(dim_model, 'None', 'No'),
+  ANCOVA = column(ancova, 'Baseline outcome', 'Yes'),
+  'PDS lasso' = column(pds_fe, paste(length(sel), 'selected'), 'Yes'), check.names = FALSE)
+write_table(comparison, 'Table2_comparison')
+pdf_table(comparison, 'Table2_comparison', 'Effect of NGO entry on government health-worker care', 9, 3)
+
+# 5. Requested continuous interaction regressions (ordinary lm) ---------------
+# These use the actual dataset column names, not workspace vectors Y and D.
+# lm() handles missing values separately for each model (as in the request).
+proj_model_wel <- lm(EL_care_GvtChw ~ treat * BL_index_wealth, data = data)
+proj_model_HH <- lm(EL_care_GvtChw ~ treat * BL_HH_number, data = data)
+proj_model_Gvt <- lm(EL_care_GvtChw ~ treat * BL_GvtChw, data = data)
+proj_model_scarce <- lm(EL_care_GvtChw ~ treat * BL_scarce, data = data)
+projection_models <- list(Wealth = proj_model_wel, Village_size = proj_model_HH,
+                          Government_worker = proj_model_Gvt, Labor_scarcity = proj_model_scarce)
+interaction_table <- do.call(rbind, lapply(names(projection_models), function(nm) {
+  m <- projection_models[[nm]]; tab <- coef(summary(m)); term <- grep(':', rownames(tab), value = TRUE)
+  data.frame(Variable = nm, Term = term, Estimate = tab[term, 1], Std_Error = tab[term, 2],
+             p_value = tab[term, 4], N = nobs(m))
+}))
+write_table(interaction_table, 'Table_interactions_OLS')
+capture.output(lapply(projection_models, summary), file = output('Interaction_regression_summaries.txt'))
+# Supplemental inference with area FE and village-clustered SEs, separately labeled.
+clustered_interactions <- lapply(c('BL_index_wealth', 'BL_HH_number', 'BL_GvtChw', 'BL_scarce'), function(v)
+  feols(as.formula(paste('EL_care_GvtChw ~ treat *', v, '| area_code')), data = data, vcov = ~village_codeU))
+capture.output(lapply(clustered_interactions, summary), file = output('Interaction_regressions_clustered_FE.txt'))
+
+# 6. Median-split interaction regressions (submitted slide 16) -----------------
+h <- data
+h$wealth_high <- as.numeric(h$BL_index_wealth > median(h$BL_index_wealth, na.rm = TRUE))
+h$size_large <- as.numeric(h$BL_HH_number > median(h$BL_HH_number, na.rm = TRUE))
+h1 <- feols(EL_care_GvtChw ~ treat * BL_GvtChw | area_code, data = h, vcov = ~village_codeU)
+h2 <- feols(EL_care_GvtChw ~ treat * wealth_high | area_code, data = h, vcov = ~village_codeU)
+h3 <- feols(EL_care_GvtChw ~ treat * size_large | area_code, data = h, vcov = ~village_codeU)
+h4 <- feols(EL_care_GvtChw ~ treat * BL_scarce | area_code, data = h, vcov = ~village_codeU)
+h5 <- feols(EL_care_GvtChw ~ treat * (BL_GvtChw + wealth_high + size_large + BL_scarce) | area_code,
+             data = h, vcov = ~village_codeU)
+fmt <- function(est, se) sprintf('%.3f (%.3f)', est, se)
+group_effects <- function(m, v, label, lo, hi) {
+  b <- coef(m); V <- vcov(m); int <- paste0('treat:', v)
+  data.frame(Variable = label, Group_0 = lo, Effect_0 = fmt(b['treat'], sqrt(V['treat', 'treat'])),
+    Group_1 = hi, Effect_1 = fmt(b['treat'] + b[int], sqrt(V['treat','treat'] + V[int,int] + 2*V['treat',int])),
+    Difference = fmt(b[int], sqrt(V[int,int])), p_value = sprintf('%.3f', pvalue(m)[int]))
+}
+het_summary <- rbind(group_effects(h1, 'BL_GvtChw', 'Gov worker in 2010', 'No', 'Yes'),
+  group_effects(h2, 'wealth_high', 'Village wealth', 'At/below median', 'Above median'),
+  group_effects(h3, 'size_large', 'Village size', 'At/below median', 'Above median'),
+  group_effects(h4, 'BL_scarce', 'Labor supply', 'Abundant', 'Scarce'))
+rownames(het_summary) <- NULL
+write_table(het_summary, 'Table4_heterogeneity')
+pdf_table(het_summary, 'Table4_heterogeneity', 'Effect of NGO entry by baseline subgroup', 14, 3)
+capture.output(summary(h5), file = output('Joint_subgroup_interactions.txt'))
+
+# 7. Causal forests: preserve both submitted candidate sets -------------------
+vars8 <- c('BL_GvtChw', 'BL_scarce', 'BL_care_GvtChw', 'BL_care_Hosp',
+           'BL_Dist_PrivClinic10', 'BL_Dist_Hosp10', 'BL_HH_number', 'BL_index_wealth')
+vars23 <- c(vars8, 'BL_care_TradHeal', 'BL_care_DrugStore', 'BL_care_PrivHospClin',
+  'BL_farmer', 'BL_schoolopen', 'BL_nbattend', 'BL_Age_Head', 'BL_AbovePrimary',
+  'BL_Number_Infants', 'BL_health_index', 'BL_TradHealer', 'BL_DrugStore',
+  'BL_infants_per_HH', 'BL_infants_per_HH_died', 'BL_share_primary')
+nice_names <- c(BL_GvtChw='Gov. worker', BL_scarce='Labor scarcity', BL_care_GvtChw='Care: gov. worker',
+  BL_care_Hosp='Care: gov. clinic', BL_Dist_PrivClinic10='Private clinic nearby',
+  BL_Dist_Hosp10='Gov. clinic nearby', BL_HH_number='Village size', BL_index_wealth='Wealth',
+  BL_care_TradHeal='Care: healer', BL_care_DrugStore='Care: drug store', BL_care_PrivHospClin='Care: private clinic',
+  BL_farmer='Farmer', BL_schoolopen='School open', BL_nbattend='Kids in school', BL_Age_Head="Head's age",
+  BL_AbovePrimary="Head's education", BL_Number_Infants='HH infants', BL_health_index='Health behavior',
+  BL_TradHealer='Healer in village', BL_DrugStore='Drug store in village',
+  BL_infants_per_HH='Infants per HH', BL_infants_per_HH_died='Infant deaths', BL_share_primary='Share primary educ.')
+W_hat <- ave(data$treat, data$area_code, FUN = mean)
+stopifnot(all(W_hat > 0 & W_hat < 1))
+fit_forest <- function(vars, tag) {
+  X <- as.matrix(data[, vars, drop = FALSE])
+  # grf handles missing predictor values natively; preserve submitted preprocessing.
+  cf <- causal_forest(X, Y_clean, D_clean, W.hat = W_hat, clusters = as.integer(data$village_codeU),
+                      tune.parameters = 'all', seed = 8675309)
+  cal <- test_calibration(cf)
+  calibration <- data.frame(Term = c('Mean forest pred.', 'Differential forest pred.'),
+    Estimate = cal[,1], SE = cal[,2], p_value = cal[,4])
+  write_table(calibration, paste0('Table5_calibration_', tag))
+  displayed <- calibration; displayed[,2:3] <- round(displayed[,2:3], 3)
+  displayed$p_value <- sprintf('%.3f', displayed$p_value)
+  pdf_table(displayed, paste0('Table5_calibration_', tag), paste('Calibration test:', length(vars), 'covariates'), 7, 2)
+  importance <- data.frame(variable = vars, importance = as.vector(variable_importance(cf)))
+  importance <- importance[order(importance$importance, decreasing = TRUE), ]
+  write_table(importance, paste0('Variable_importance_', tag))
+  importance$variable <- factor(importance$variable, levels = rev(importance$variable))
+  fig <- ggplot(importance, aes(x = importance, y = variable)) + geom_col(fill='steelblue') +
+    scale_y_discrete(labels=nice_names) + labs(x='Variable importance', y=NULL,
+      title=paste0('Variable Importance in Causal Forest (', length(vars), ' covariates)')) + theme_minimal(base_size=13)
+  ggsave(output(paste0('Figure2_variable_importance_', tag, '.png')), fig, width=8,
+         height=if (length(vars)>8) 6 else 4.5, dpi=300, bg='white')
+  cate <- as.vector(predict(cf)$predictions)
+  write_table(data.frame(village_codeU=data$village_codeU, CATE=cate), paste0('CATE_', tag))
+  # All subgroup rows are drawn from the same data used to fit this forest.
+  wm <- median(data$BL_index_wealth); sm <- median(data$BL_HH_number)
+  groups <- list(All=rep(TRUE,nrow(data)), Gov_worker=data$BL_GvtChw==1, No_gov_worker=data$BL_GvtChw==0,
+    Wealth_above_median=data$BL_index_wealth>wm, Wealth_at_below_median=data$BL_index_wealth<=wm,
+    Village_size_above_median=data$BL_HH_number>sm, Village_size_at_below_median=data$BL_HH_number<=sm,
+    Labor_scarce=data$BL_scarce==1, Labor_abundant=data$BL_scarce==0,
+    CATE_above_median=cate>median(cate), CATE_at_below_median=cate<=median(cate))
+  subgroup <- do.call(rbind,lapply(names(groups),function(nm) {
+    ii <- which(groups[[nm]]); a <- average_treatment_effect(cf,subset=ii)
+    data.frame(Group=nm,N=length(ii),Estimate=unname(a['estimate']),Std_Error=unname(a['std.err']))
+  }))
+  write_table(subgroup,paste0('Table3_causal_forest_',tag))
+  if (length(vars)>8) {
+    top_vars <- unique(c(as.character(importance$variable[1:10]), 'BL_GvtChw'))
+    # Missing values in A are not accepted by BLP. Mean-impute only its projection covariates;
+    # the forest itself keeps native missing-value handling. This repairs an original runtime error.
+    A <- X[,top_vars,drop=FALSE]
+    for (j in seq_len(ncol(A))) if (anyNA(A[,j])) A[is.na(A[,j]),j] <- mean(A[,j], na.rm=TRUE)
+    stopifnot(all(is.finite(A)))
+    blp <- best_linear_projection(cf,A)
+    write_table(data.frame(Term=rownames(blp),as.data.frame(unclass(blp)),check.names=FALSE),'Best_linear_projection_23vars')
+    capture.output(blp,file=output('Best_linear_projection_23vars.txt'))
+  }
+  list(forest=cf,calibration=cal,cate=cate,subgroup=subgroup)
+}
+message('Fitting 23-covariate forest...')
+forest23 <- fit_forest(vars23,'23vars')
+message('Fitting 8-covariate forest...')
+forest8 <- fit_forest(vars8,'8vars')
+
+# 8. Eight-variable forest CATE figures --------------------------------------
+CATE_df <- data.frame(CATE=forest8$cate,group=ifelse(data$BL_GvtChw==1,'Gov worker in 2010','No gov worker in 2010'))
+fig_cate <- ggplot(CATE_df,aes(x=CATE,fill=group)) +
+  geom_histogram(bins=40,alpha=.6,position='identity') + geom_vline(xintercept=0,linetype='dashed') +
+  labs(x='Estimated treatment effect (CATE)',y='Households',fill=NULL,
+       title='Estimated treatment effects by baseline government presence') +
+  theme_minimal(base_size=13) + theme(legend.position='bottom')
+ggsave(output('Figure3_CATE_histogram.png'),fig_cate,width=8,height=4.5,dpi=300,bg='white')
+cate_hist <- ggplot(CATE_df,aes(x=CATE)) + geom_histogram(bins=20,fill='steelblue',color='white') +
+  geom_vline(xintercept=0,linetype='dashed') + labs(title='Distribution of Estimated Treatment Effects',
+  x='Estimated CATE',y='Number of Households') + theme_minimal()
+ggsave(output('cate_histogram.pdf'),cate_hist,width=7,height=5)
+ggsave(output('cate_histogram.png'),cate_hist,width=7,height=5,dpi=300,bg='white')
+
+# 9. Logs and saved models ---------------------------------------------------
+capture.output({ print(comparison); print(interaction_table); print(het_summary);
+  print(forest23$calibration); print(forest8$calibration); summary(pds_model) },file=output('Key_results.txt'))
+capture.output(sessionInfo(),file=output('sessionInfo.txt'))
+saveRDS(list(pds=pds_model,pds_fe=pds_fe,ancova=ancova,difference_in_means=dim_model,
+  interactions=projection_models,forest23=forest23,forest8=forest8),output('Models.rds'))
+message('Complete. Results saved to: ',normalizePath(out_dir))
