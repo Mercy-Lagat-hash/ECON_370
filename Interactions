@@ -1,0 +1,9 @@
+proj_model_wel <- lm(Y ~ D * BL_index_wealth, Household_data)
+proj_model_HH <- lm(Y ~ D * BL_HH_number, Household_data)
+proj_model_Gvt <- lm(Y ~ D * BL_GvtChw , Household_data)
+proj_model_scarce <- lm(Y ~ D * BL_scarce, Household_data)
+
+summary(proj_model_wel)
+summary(proj_model_HH)
+summary(proj_model_Gvt)
+summary(proj_model_scarce)
